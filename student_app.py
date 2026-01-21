@@ -12,8 +12,9 @@ if not os.path.exists("recordings"): os.makedirs("recordings")
 S = st.session_state
 t_lim = int(data.get('limit', 40))
 
-if S.get('started') and S.get('mode') == "s":
-    st_autorefresh(interval=1000, key="timer_refresh")
+# تم نقل st_autorefresh لتفادي خطأ التكرار (Duplicate Key)
+if S.get('started') and S.get('mode') == "s" and S.get('curr_pg') == "اللعب 🚀":
+    st_autorefresh(interval=1000, key="timer_refresh_unique")
 
 bg_link = data.get('bg', "") 
 colored_indices = data.get('colored_indices', {})
@@ -21,6 +22,7 @@ colored_indices = data.get('colored_indices', {})
 if 'started' not in S: S.started, S.curr, S.mode, S.sec = False, 0, "s", t_lim
 if 'last_curr' not in S: S.last_curr = 0
 if 'play_audio' not in S: S.play_audio = False
+if 'grades' not in S: S.grades = {}
 
 # 2. تنسيق CSS المستقر
 st.markdown(f"""<style>
@@ -45,18 +47,14 @@ st.markdown(f"""<style>
         color: red !important; font-size: 70px !important; font-weight: bold !important;
         text-align: center !important; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
     }}
-    .stMicrophoneButton button {{ 
-        height: 45px !important; width: 100% !important; border-radius: 10px !important;
-    }}
 </style>""", unsafe_allow_html=True)
 
-pg = st.sidebar.radio("القائمة:", ["اللعب 🚀", "الدرجات 🎓"])
+# القائمة الجانبية
+S.curr_pg = st.sidebar.radio("القائمة:", ["اللعب 🚀", "الدرجات 🎓"])
 
-if pg == "اللعب 🚀":
+if S.curr_pg == "اللعب 🚀":
     if not S.started:
         st.markdown('<div style="text-align:center; padding-top:50px;">', unsafe_allow_html=True)
-        
-        # زر البداية في عمود منظم
         _, center_col, _ = st.columns([1, 1, 1])
         with center_col:
             if st.button("🚀 إبدأ التحدي", use_container_width=True): 
@@ -64,30 +62,23 @@ if pg == "اللعب 🚀":
                 selected = S.get('selected_lesson_key')
                 if selected and selected in archive:
                     lesson = archive[selected]
-                    # تحميل بيانات الدرس المختار
                     S.active_words = lesson['words']
                     S.active_full = lesson.get('full_words', [""] * len(lesson['words']))
                     S.active_audio = lesson['audio']
                     S.active_colors = lesson.get('colored_indices', {})
-                    S.sec = int(lesson.get('limit', 40))
                 else:
-                    # في حال لم يختر شيئاً يستخدم البيانات الافتراضية
                     S.active_words = data.get('words', [])
                     S.active_full = data.get('full_words', [])
                     S.active_audio = data.get('audio', {})
                     S.active_colors = colored_indices
-                
-                S.started = True; st.rerun()
+                S.started = True; S.curr = 0; S.mode = "s"; S.grades = {}; st.rerun()
             
-            # سهم اختيار الدرس صغير وبسيط
             archive = data.get('lessons_archive', {})
             if archive:
-                S.selected_lesson_key = st.selectbox("🎯 الدرس:", list(archive.keys()), label_visibility="collapsed")
-        
+                S.selected_lesson_key = st.selectbox("🎯 الدرس:", list(archive.keys()))
         st.markdown('</div>', unsafe_allow_html=True)
         st.stop()
     
-    # واجهة التحدي باستخدام البيانات المحددة
     words = S.get('active_words', [])
     full_words = S.get('active_full', [])
     audio_data = S.get('active_audio', {})
@@ -97,10 +88,10 @@ if pg == "اللعب 🚀":
         if S.last_curr != S.curr:
             S.sec = t_lim; S.last_curr = S.curr; S.mode = "s"; S.play_audio = False
 
+        word_data = words[S.curr]
         if S.curr < len(full_words) and full_words[S.curr]:
             st.markdown(f'<div style="text-align:center; width:100%;"><div class="word-hint"><h1 style="margin:0; font-size:60px; color:#1b5e20;">{full_words[S.curr]}</h1></div></div>', unsafe_allow_html=True)
 
-        word_data = words[S.curr]
         _, main_cols, _ = st.columns([1, 4, 1])
         with main_cols:
             char_cols = st.columns(4)
@@ -118,45 +109,48 @@ if pg == "اللعب 🚀":
                     S.sec -= 1
                     st.markdown(f'<p class="timer-text">{int(S.sec)}</p>', unsafe_allow_html=True)
                 else:
-                    S.curr += 1; S.sec = t_lim; st.rerun()
+                    # انتقال تلقائي للكلمة التالية بعد انتهاء الوقت
+                    S.curr += 1; S.mode = "s"; st.rerun()
 
                 if st.button("📢 استمع للتهجي", use_container_width=True): 
                     S.play_audio = True
-
                 if S.get('play_audio'):
                     aud = audio_data.get(f"s_{S.curr}")
                     if aud: st.audio(aud, format="audio/mp3", autoplay=True)
-                
-                audio_result = mic_recorder(
-                    start_prompt="🎙️ سجل نطقك", 
-                    stop_prompt="✅ توقف واحفظ", 
-                    key=f"mic_v2_{S.curr}",
-                    use_container_width=True
-                )
-                
+
+                audio_result = mic_recorder(start_prompt="🎙️ سجل نطقك", stop_prompt="✅ توقف واحفظ", key=f"mic_v2_{S.curr}", use_container_width=True)
                 if audio_result:
-                    with open(f"recordings/ans_{S.curr}.mp3", "wb") as f:
-                        f.write(audio_result['bytes'])
-                    st.success("✅ تم حفظ تسجيلك بنجاح!")
+                    with open(f"recordings/ans_{S.curr}.mp3", "wb") as f: f.write(audio_result['bytes'])
                 
                 if st.button("🎓 تصحيح الكلمة ➡️", use_container_width=True): 
                     S.mode = "c"; st.rerun()
             else:
-                st.audio(audio_data.get(f"c_{S.curr}"), autoplay=True)
+                correct_aud = audio_data.get(f"c_{S.curr}")
+                if correct_aud: st.audio(correct_aud, format="audio/mp3", autoplay=True)
                 if st.button("الكلمة التالية ⏮️", use_container_width=True):
                     S.curr += 1; S.mode = "s"; st.rerun()
     else:
         st.success("🏆 انتهى التحدي!"); st.balloons()
-        if st.button("🔄 إعادة"): S.started, S.curr = False, 0; st.rerun()
+        if st.button("🔄 إعادة"): S.started, S.curr, S.grades = False, 0, {}; st.rerun()
 
 else:
+    # 5. قسم الدرجات والملخص (مربع درجة لكل سؤال ومجموع في الأسفل)
     st.title("🎓 ملخص نتائج الطالب")
-    all_words = data.get('words', [])
-    for i, w in enumerate(all_words):
-        with st.container():
-            c1, c2, c3 = st.columns([1, 4, 1.5])
-            c1.write(f"### #{i+1}")
-            c2.write(f"كلمة: {' '.join(w)}")
-            p_ans = f"recordings/ans_{i}.mp3"
-            if os.path.exists(p_ans): c2.audio(p_ans)
-            st.markdown("---")
+    words_to_show = S.get('active_words', data.get('words', []))
+    
+    for i, w in enumerate(words_to_show):
+        c_info, c_grade = st.columns([0.8, 0.2])
+        with c_info:
+            st.subheader(f"📖 الكلمة {i+1}: {' '.join(w)}")
+            path = f"recordings/ans_{i}.mp3"
+            if os.path.exists(path): st.audio(path)
+        with c_grade:
+            S.grades[i] = st.selectbox(f"الدرجة", [0, 1, 2], key=f"g_score_{i}")
+        st.divider()
+
+    total_pts = sum(S.grades.values())
+    max_pts = len(words_to_show) * 2
+    st.markdown(f"""
+        <div style="background-color: #1e3a8a; padding: 20px; border-radius: 15px; text-align: center; color: white;">
+            <h2 style="color: white; margin:0;">📊 المجموع الكلي: {total_pts} من {max_pts}</h2>
+        </div>""", unsafe_allow_html=True)
